@@ -32,19 +32,19 @@ dynect4r is a Ruby library and command line client for the Neustar Dynect SOAP A
 
 ==== Create an A record
 
-  dynect4r.rb -n test.example.org. 1.1.1.1
+  dynect4r.rb -n test.example.org 1.1.1.1
 
 ==== Create round-robin A records
 
-  dynect4r.rb -n test.example.org. 1.1.1.1,2.2.2.2,3.3.3.3
+  dynect4r.rb -n test.example.org 1.1.1.1,2.2.2.2,3.3.3.3
 
 ==== Create a CNAME record
 
-  dynect4r.rb -n test.example.org. -t CNAME test.example.org.
+  dynect4r.rb -n test.example.org -t CNAME test.example.org.
 
 ==== Create an SRV record
 
-  dynect4r.rb -n srv.example.org. -t SRV 0 10 20 target.example.org.
+  dynect4r.rb -n srv.example.org -t SRV 0 10 20 target.example.org.
 
 === Help and Troubleshooting
 
