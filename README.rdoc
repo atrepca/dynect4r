@@ -1,24 +1,19 @@
 = dynect4r
 
-dynect4r is a Ruby library and command line client for the Neustar Dynect SOAP API.
-
-== Installation
-
-1. Install {Ruby}[http://www.ruby-lang.org/]
-2. Install {RubyGems}[http://rubygems.org]
-3. Install {Savon}[http://github.com/rubiii/savon]
-4. Download {dynect4r.rb}[http://github.com/mconigliaro/dynect4r/raw/master/dynect4r.rb]
+dynect4r is a Ruby library and command line client for the Dynect REST API.
 
 == Using this library in your own project
 
   require 'dynect4r'
-  client = Dynect::Client.new('customer', 'username', 'password')
-  response = client.soap_call('ZoneGet!', {'zone' => 'example.org'})
+  client = Dynect::Client.new(:customer_name => 'example',
+                              :user_name => 'example',
+                              :password => 'example')
+  response = client.rest_call(:get, 'Zone/example.org')
   pp response
 
 == Using the built-in command line client
 
-1. Create a file called <b>dynect4r.secret</b> containing your Dynect customer, username and password (i.e. on one line separated by whitespace). Note that this file is assumed to be in the current directory by default.
+1. Create a file called <b>dynect4r.secret</b> containing your Dynect customer name, username and password (i.e. on one line separated by whitespace). Note that this file is assumed to be in the current directory by default.
 2. See examples below:
 
 === General usage

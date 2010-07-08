@@ -1,6 +1,6 @@
-#!/usr/bin/ruby -W0
+#!/usr/bin/env ruby
 ################################################################################
-# dynect4r - Ruby library and command line client for Dynect SOAP API
+# dynect4r - Ruby library and command line client for Dynect REST API
 # Copyright (c) 2010 Michael Conigliaro <mike [at] conigliaro [dot] org>
 #
 # This program is free software; you can redistribute it and/or modify
@@ -18,110 +18,213 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 ################################################################################
 
+require 'rubygems'
+gem 'json', '>=1.4.3'
+
+require 'json'
 require 'logger'
 require 'optparse'
 require 'pp'
-require 'socket'
-require 'rubygems'
-require 'savon'
+require 'set'
+require 'rest_client'
+
 
 module Dynect
 
   class Client
 
-    attr_reader :response_hash, :response_messages
-
-    # constructor
-    def initialize(customer, username, password)
-      wsdl = 'https://api.dynect.net/soap'
-      @customer = customer
-      @username = username
-      @password = password
-      @soap_client = soap_client = Savon::Client.new(wsdl)
-      @soap_namespaces = {
-        'xmlns:wsdl'        => '/DynectAPI/', # FIXME: remove wsdl prefix from all soap calls
-        'xmlns:xsi'         => 'http://www.w3.org/2001/XMLSchema-instance',
-        'xmlns:soapenc'     => 'http://schemas.xmlsoap.org/soap/encoding/',
-        'xmlns:xsd'         => 'http://www.w3.org/2001/XMLSchema',
-        'env:encodingStyle' => 'http://schemas.xmlsoap.org/soap/encoding/'
-      }
+    # log in, set auth token
+    def initialize(params)
+      @base_url = 'https://api2.dynect.net'
+      @headers = { :content_type => :json, :accept => :json }
+      response = rest_call(:post, 'Session', params)
+      @headers['Auth-Token'] = response[:data][:token]
     end
 
-    # do soap call
-    def soap_call(method, args = {})
+    # do a rest call
+    def rest_call(action, resource, arguments = nil)
 
-      response = @soap_client.send(method.to_sym) do |soap|
+      # set up retry loop
+      max_tries = 12
+      for try_counter in (1..max_tries)
 
-        # set namesaces
-        soap.namespaces.merge!(@soap_namespaces)
-
-        # convert method name from lower-camelcase to camelcase
-        soap.action[0] = soap.action[0,1].upcase
-        soap.input[0] = soap.input[0,1].upcase
-
-        # set common attributes for all SOAP methods
-        soap.body = {
-          :attributes! => {
-            method => { 'xmlns' => '/DynectAPI/' }
-          },
-          'c-gensym3' => {
-            'cust' => @customer,
-            'user' => @username,
-            'pass' => @password,
-          }
-        }
-
-        # merge per-method attributes
-        soap.body['c-gensym3'].merge!(args)
-
-      end
-
-      # get response hash
-      xml_method_response = response.to_hash.keys.first.to_sym
-      xml_gensym = nil
-      response.to_hash[xml_method_response].keys.each do |key|
-        if key.to_s =~ /gensym/
-          xml_gensym = key
+        # pause between retries
+        if try_counter > 1
+          sleep(5)
         end
-      end
-      @response_hash = response.to_hash[xml_method_response][xml_gensym]
 
-      # save all messages and errors
-      response_messages = []
-      if @response_hash[:messages]
-        @response_hash[:messages].each do |k,v|
-          response_messages << "%s: %s" % [k, v]
-        end
-      end
-      if @response_hash[:errors]
-        @response_hash[:errors].each do |k,v|
-          response_messages << "%s: %s" % [k, v]
-        end
-      end
-      @response_messages = response_messages.join(', ')
+        resource_url = resource_to_url(resource)
 
-      return response
+        # do rest call
+        begin
+          response = case action
+          when :post, :put
+            RestClient.send(action, resource_url, arguments.to_json, @headers) do |res,req|
+              Dynect::Response.new(res)
+            end
+          else
+            RestClient.send(action, resource_url, @headers) do |res,req|
+              Dynect::Response.new(res)
+            end
+          end
+
+          # if we got this far, then it's safe to break out of the retry loop
+          break
+
+        # on redirect, rewrite rest call params and retry
+        rescue RedirectError
+          if try_counter < max_tries
+            action = :get
+            resource = $!.message
+            arguments = nil
+          else
+            raise OperationTimedOut, "Maximum number of tries (%d) exceeded on resource: %s" % [max_tries, resource]
+          end
+        end
+
+      end
+
+      # return a response object
+      response
     end
 
-    # return ordered list of parameters for each record type
-    def rdata_hash_opts(rtype)
-      case rtype
+    private
+
+    # convert the given resource into a proper url
+    def resource_to_url(resource)
+
+      # convert into an array
+      if resource.is_a? String
+        resource = resource.split('/')
+      end
+
+      # remove empty elements
+      resource.delete('')
+
+      # make sure first element is 'REST'
+      if resource[0] != 'REST'
+        resource.unshift('REST')
+      end
+
+      # prepend base url and convert back to string
+      "%s/%s/" % [@base_url, resource.join('/')]
+    end
+
+  end
+
+  class Response
+
+    def initialize(response)
+
+      # parse response
+      begin
+        @hash = JSON.parse(response, :symbolize_names => true)
+      rescue JSON::ParserError
+        if response =~ /REST\/Job\/[0-9]+/
+          raise RedirectError, response
+        else
+         raise
+        end
+      end
+
+      # raise error based on error code
+      if @hash.has_key?(:msgs)
+        @hash[:msgs].each do |msg|
+          case msg[:ERR_CD]
+          when 'ILLEGAL_OPERATION'
+            raise IllegalOperationError, msg[:INFO]
+          when 'INTERNAL_ERROR'
+            raise InternalErrorError, msg[:INFO]
+          when 'INVALID_DATA'
+            raise InvalidDataError, msg[:INFO]
+          when 'INVALID_REQUEST'
+            raise InvalidRequestError, msg[:INFO]
+          when 'INVALID_VERSION'
+            raise InvalidVersionError, msg[:INFO]
+          when 'MISSING_DATA'
+            raise MissingDataError, msg[:INFO]
+          when 'NOT_FOUND'
+            raise NotFoundError, msg[:INFO]
+          when 'OPERATION_FAILED'
+            raise OperationFailedError, msg[:INFO]
+          when 'PERMISSION_DENIED'
+            raise PermissionDeniedError, msg[:INFO]
+          when 'SERVICE_UNAVAILABLE'
+            raise ServiceUnavailableError, msg[:INFO]
+          when 'TARGET_EXISTS'
+            raise TargetExistsError, msg[:INFO]
+          when 'UNKNOWN_ERROR'
+            raise UnknownErrorError, msg[:INFO]
+          end
+        end
+      end
+    end
+
+    def [](key)
+      @hash[key]
+    end
+
+  end
+
+  # exceptions generated by class
+  class DynectError < StandardError; end
+  class RedirectError < DynectError; end
+  class OperationTimedOut < DynectError; end
+
+    # exceptions generated by api
+  class IllegalOperationError < DynectError; end
+  class InternalErrorError < DynectError; end
+  class InvalidDataError < DynectError; end
+  class InvalidRequestError < DynectError; end
+  class InvalidVersionError < DynectError; end
+  class MissingDataError < DynectError; end
+  class NotFoundError < DynectError; end
+  class OperationFailedError < DynectError; end
+  class PermissionDeniedError < DynectError; end
+  class ServiceUnavailableError < DynectError; end
+  class TargetExistsError < DynectError; end
+  class UnknownErrorError < DynectError; end
+
+  class Logger < Logger
+
+    # override << operator to control rest_client logging
+    # see http://github.com/archiloque/rest-client/issues/issue/34/
+    def << (msg)
+      debug(msg.strip)
+    end
+  end
+
+  class << self
+
+    # return the appropriate rest resource for the given rtype
+    def rtype_to_resource(rtype)
+      rtype.upcase + 'Record'
+    end
+
+    # return a hash of arguments for the specified rtype
+    def args_for_rtype(rtype, rdata)
+
+      arg_array = case rtype
       when 'A', 'AAAA'
         ['address']
       when 'CNAME'
         ['cname']
-      when 'KEY'
+      when 'DNSKEY', 'KEY'
         ['flags', 'protocol', 'algorithm', 'public_key']
+      when 'DS'
+        ['keytag', 'algorithm', 'digtype', 'digest']
       when 'LOC'
-        ['latitude', 'longitude', 'altitude', 'size', 'horiz_pre', 'vert_pre']
+        ['version', 'size', 'horiz_pre', 'vert_pre' 'latitude', 'longitude', 'altitude']
       when 'MX'
         ['preference', 'exchange']
       when 'NS'
         ['nsdname']
       when 'PTR'
         ['ptrdname']
+      when 'RP'
+        ['mbox', 'txtdname']
       when 'SOA'
-        ['mname', 'rname', 'serial', 'refresh', 'retry', 'expire', 'minimum']
+        ['rname']
       when 'SRV'
         ['priority', 'weight', 'port', 'target']
       when 'TXT'
@@ -129,27 +232,36 @@ module Dynect
       else
         []
       end
+
+      if rtype == 'TXT'
+        rdata = { arg_array[0] => rdata }
+      else
+        rdata.split.inject({}) { |memo,obj| memo[arg_array[memo.length]] = obj; memo }
+      end
     end
 
   end
 
 end
 
+
 # command line client
 if __FILE__ == $0
 
   # set default command line options
   options = {
-    :cred_file => './dynect4r.secret',
-    :customer  => nil,
-    :username  => nil,
-    :password  => nil,
-    :zone      => nil,
-    :node      => Socket.gethostbyname(Socket.gethostname).first + '.',
-    :ttl       => 86400,
-    :type      => 'A',
-    :rdata     => nil,
-    :log_level => 'warn'
+    :cred_file       => './dynect4r.secret',
+    :customer        => nil,
+    :username        => nil,
+    :password        => nil,
+    :zone            => nil,
+    :node            => Socket.gethostbyname(Socket.gethostname).first,
+    :ttl             => 86400,
+    :type            => 'A',
+    :rdata           => nil,
+    :log_level       => 'info',
+    :dry_run         => false,
+    :cancel_on_error => false
   }
 
   # parse command line options
@@ -181,23 +293,25 @@ if __FILE__ == $0
       options[:log_level] = opt
     end
 
-    opts.on('--dry-run', "Perform a trial run without making changes") do |opt|
+    opts.on('--dry-run', "Perform a trial run without making changes (default: %s)" % options[:dry_run]) do |opt|
       options[:dry_run] = opt
     end
 
+    opts.on('--cancel-on-error', "All changes will be canceled if any error occurs (default: %s)" % options[:cancel_on_error]) do |opt|
+      options[:cancel_on_error] = opt
+    end
+
   end.parse!
+  options[:rdata] = ARGV.join(' ').split(',').collect { |obj| obj.strip() }
 
   # instantiate logger
-  log = Logger.new(STDOUT)
-  Savon::Request.logger = log
-  log.level = eval('Logger::' + options[:log_level].upcase)
-
-  # disable savon exceptions so we can access the error descriptions
-  Savon::Response.raise_errors = false
+  log = Dynect::Logger.new(STDOUT)
+  log.level = eval('Dynect::Logger::' + options[:log_level].upcase)
+  RestClient.log = log
 
   # validate command line options
   begin
-    (options[:customer], options[:username], options[:password]) = File.open(options[:cred_file]).readline().strip().split()
+    (options[:customer_name], options[:user_name], options[:password]) = File.open(options[:cred_file]).readline().strip().split()
   rescue Errno::ENOENT
     log.error('Credentials file does not exist: %s' % options[:cred_file])
     Process.exit(1)
@@ -205,163 +319,101 @@ if __FILE__ == $0
   if !options[:zone]
     options[:zone] = options[:node][(options[:node].index('.') + 1)..-1]
   end
-  if ARGV.size > 0
-    options[:rdata] = ARGV.join(' ').split(',')
-  end
 
-  # instantiate dynect client
-  c = Dynect::Client.new(options[:customer], options[:username], options[:password])
+  # track number of changes and errors
+  changes = 0
+  errors = 0
 
-  # check if node exists and create if necessary
-  if options[:rdata]
-    c.soap_call('NodeGet!', {
-      'zone' => options[:zone],
-      'node' => options[:node]
-    })
-    if c.response_hash[:status] != 'success'
-      if options[:dry_run]
-        log.warn('Will create node (Zone="%s" Node="%s")' %
-          [options[:zone], options[:node]])
-      else
-        c.soap_call('NodeAdd!', {
-          'zone' => options[:zone],
-          'node' => options[:node]
-        })
-        if c.response_hash[:status] == 'success'
-          log.warn('Created node (Zone="%s" Node="%s")' %
-            [options[:zone], options[:node]])
-        else
-          log.error('Failed to create node (Zone="%s" Node="%s") - %s' %
-            [options[:zone], options[:node], c.response_messages])
-          Process.exit(1)
-        end
-      end
-    end
-  end
-
-  # query for existing records
-  c.soap_call('RecordGet!', {
-    'zone' => options[:zone],
-    'node' => options[:node],
-    'type' => options[:type]
-  })
-  if c.response_hash[:status] != 'success'
-    log.error('Query for existing records failed - %s' % c.response_messages)
+  # instantiate dynect client and log in
+  log.info('Starting session')
+  begin
+    c = Dynect::Client.new(:customer_name => options[:customer_name],
+                           :user_name => options[:user_name],
+                           :password => options[:password])
+  rescue Dynect::DynectError
+    log.error($!.message)
     Process.exit(1)
-  else
-
-    # make sure we're always dealing with an array of resource records
-    records = []
-    if c.response_hash[:records][:item].type == Hash
-      records[0] = c.response_hash[:records][:item]
-    elsif c.response_hash[:records][:item].type == Array
-      records = c.response_hash[:records][:item]
-    end
-
-    # loop through existing records
-    records.each do |record|
-
-      # delete existing records
-      if options[:dry_run]
-        log.warn('Will delete record (Node="%s" Type="%s" RecordID="%s")' %
-          [record[:node], options[:type], record[:record_id]])
-      else
-        c.soap_call('RecordDelete!', { 'record_id' => record[:record_id] })
-        if c.response_hash[:status] == 'success'
-          log.warn('Deleted record (Node="%s" Type="%s" RecordID="%s")' %
-            [record[:node], options[:type], record[:record_id]])
-        else
-          log.warn('Failed to delete record (Node="%s" Type="%s" RecordID="%s") - %s' %
-            [record[:node], options[:type], record[:record_id], c.response_messages])
-        end
-      end
-    end
-
-    # loop through each rdata
-    if options[:rdata]
-      rdata_hash_opts = c.rdata_hash_opts(options[:type])
-      options[:rdata].each do |rdata|
-
-        # check number of parameters
-        if rdata.split(' ').length != rdata_hash_opts.length && options[:type] != 'TXT'
-          log.error('%s records require %s parameter(s) (%s) but %d parameter(s) were given (%s)' %
-            [options[:type], rdata_hash_opts.length, rdata_hash_opts.join(', '), rdata.split(' ').length, rdata.split(' ').join(', ')])
-        else
-
-          # format rdata options for new record
-          # FIXME: TXT records always get quoted - dynect bug?
-          rdata_formatted = {}
-          case options[:type]
-          when 'TXT'
-            rdata_formatted[rdata_hash_opts[0]] = ['']
-            rdata.split(' ').each do |value|
-              rdata_formatted[rdata_hash_opts[0]] << value
-            end
-          else
-            rdata.split(' ').each do |value|
-              rdata_formatted[rdata_hash_opts[rdata_formatted.length]] = value
-            end
-          end
-
-          # add new record
-          if options[:dry_run]
-            log.warn('Will create record (Zone="%s", Node="%s" TTL="%s", Type="%s", Data="%s")' %
-              [options[:zone], options[:node], options[:ttl], options[:type], rdata])
-          else
-            c.soap_call('RecordAdd!', {
-              'zone'  => options[:zone],
-              'node'  => options[:node],
-              'type'  => options[:type],
-              'ttl'   => options[:ttl],
-              'rdata' => rdata_formatted
-            })
-            if c.response_hash[:status] == 'success'
-              log.warn('Created record (Zone="%s", Node="%s" TTL="%s", Type="%s", Data="%s")' %
-                [options[:zone], options[:node], options[:ttl], options[:type], rdata])
-            else
-              log.error('Failed to create record (Zone="%s", Node="%s" TTL="%s", Type="%s", Data="%s") - %s' %
-                [options[:zone], options[:node], options[:ttl], options[:type], rdata, c.response_messages])
-            end
-          end
-
-        end
-
-      end
-
-    else
-
-      # delete node if empty
-      c.soap_call('RecordGet!', {
-        'zone' => options[:zone],
-        'node' => options[:node]
-      })
-      if !c.response_hash[:records].has_key?(:item)
-        c.soap_call('NodeGet!', {
-          'zone' => options[:zone],
-          'node' => options[:node]
-        })
-        if c.response_hash[:status] == 'success'
-          if options[:dry_run]
-            log.warn('Will delete node (Zone="%s" Node="%s")' %
-              [options[:zone], options[:node]])
-          else
-            c.soap_call('NodeDelete!', {
-              'zone' => options[:zone],
-              'node' => options[:node]
-            })
-            if c.response_hash[:status] == 'success'
-              log.warn('Deleted node (Zone="%s" Node="%s")' %
-                [options[:zone], options[:node]])
-            else
-              log.warn('Failed to delete node (Zone="%s" Node="%s") - %s' %
-                [options[:zone], options[:node], c.response_messages])
-            end
-          end
-        end
-      end
-
-    end
-
   end
 
+  # create set of existing records
+  begin
+    existing_rdata = Set.new
+    existing_rdata_urls = {}
+    response = c.rest_call(:get, [Dynect::rtype_to_resource(options[:type]), options[:zone], options[:node]])
+    response[:data].each do |url|
+      rdata = c.rest_call(:get, url)[:data][:rdata].inject({}) { |memo,(k,v)| memo[k.to_s] = v.to_s; memo }
+      existing_rdata << rdata
+      existing_rdata_urls[rdata] = url
+      log.info('Found record (Zone="%s", Node="%s" TTL="%s", Type="%s", RData="%s")' %
+        [options[:zone], options[:node], options[:ttl], options[:type], rdata.to_json])
+    end
+  rescue Dynect::DynectError
+    log.error('Query for records failed - %s' % $!.message)
+    Process.exit(1)
+  end
+
+  # create set of new records
+  new_rdata = Set.new
+  options[:rdata].each do |rdata|
+    new_rdata << Dynect::args_for_rtype(options[:type], rdata)
+  end
+
+  # delete records
+  (existing_rdata - new_rdata).each do |rdata|
+    log.warn('%sDeleting record (Zone="%s", Node="%s" TTL="%s", Type="%s", RData="%s")' %
+      [options[:dry_run] ? '(NOT) ' : '', options[:zone], options[:node], options[:ttl], options[:type], rdata.to_json])
+    begin
+      if not options[:dry_run]
+        c.rest_call(:delete, existing_rdata_urls[rdata])
+      end
+      changes += 1
+    rescue Dynect::DynectError
+      errors += 1
+      log.error('Failed to delete record - %s' % $!.message)
+    end
+  end
+
+  # add new records
+  (new_rdata - existing_rdata).each do |rdata|
+    log.warn('%sCreating record (Zone="%s", Node="%s" TTL="%s", Type="%s", RData="%s")' %
+      [options[:dry_run] ? '(NOT) ' : '', options[:zone], options[:node], options[:ttl], options[:type], rdata.to_json])
+    begin
+      if not options[:dry_run]
+        response = c.rest_call(:post, [Dynect::rtype_to_resource(options[:type]), options[:zone], options[:node]], { 'rdata' => rdata, 'ttl' => options[:ttl] })
+      end
+      changes += 1
+    rescue Dynect::DynectError
+      errors += 1
+      log.error('Failed to add record - %s' % $!.message)
+    end
+  end
+
+  # publish changes
+  if changes > 0
+    begin
+      if options[:cancel_on_error] and errors > 0
+        log.warn('%sCanceling changes' % [options[:dry_run] ? '(NOT) ' : ''])
+        if not options[:dry_run]
+          c.rest_call(:delete, [ 'ZoneChanges', options[:zone]])
+        end
+      else
+        log.info('%sPublishing changes' % [options[:dry_run] ? '(NOT) ' : ''])
+        if not options[:dry_run]
+          c.rest_call(:put, [ 'Zone', options[:zone]], { 'publish' => 'true' })
+        end
+      end
+    rescue Dynect::DynectError
+      log.error($!.message)
+    end
+  else
+    log.info('No changes made')
+  end
+
+  # terminate session
+  log.info('Terminating session')
+  begin
+    c.rest_call(:delete, 'Session')
+  rescue Dynect::DynectError
+    log.error($!.message)
+  end
 end
