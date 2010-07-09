@@ -2,6 +2,10 @@
 
 dynect4r is a Ruby library and command line client for the Dynect REST API.
 
+== Installation
+
+  gem install dynect4r
+
 == Using this library in your own project
 
   require 'dynect4r'
@@ -18,7 +22,7 @@ dynect4r is a Ruby library and command line client for the Dynect REST API.
 
 === General usage
 
-  dynect4r.rb [options] [rdata][, ...]
+  dynect4r-client [options] [rdata][, ...]
 
 - Multiple sets of rdata can be specified by separating them with commas.
 - Records can be deleted by not specifying rdata.
@@ -27,26 +31,26 @@ dynect4r is a Ruby library and command line client for the Dynect REST API.
 
 ==== Create an A record
 
-  dynect4r.rb -n test.example.org 1.1.1.1
+  dynect4r-client -n test.example.org 1.1.1.1
 
 ==== Create round-robin A records
 
-  dynect4r.rb -n test.example.org 1.1.1.1,2.2.2.2,3.3.3.3
+  dynect4r-client -n test.example.org 1.1.1.1,2.2.2.2,3.3.3.3
 
 ==== Create a CNAME record
 
-  dynect4r.rb -n test.example.org -t CNAME test.example.org.
+  dynect4r-client -n test.example.org -t CNAME test.example.org.
 
 ==== Create an SRV record
 
-  dynect4r.rb -n srv.example.org -t SRV 0 10 20 target.example.org.
+  dynect4r-client -n srv.example.org -t SRV 0 10 20 target.example.org.
 
 === Help and Troubleshooting
 
 See the <b>--help</b> command line option:
 
-  dynect4r.rb --help
+  dynect4r-client --help
 
 Use debug logging:
 
-  dynect4r.rb -v debug
+  dynect4r-client -v debug
