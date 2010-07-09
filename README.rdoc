@@ -1,6 +1,6 @@
 = dynect4r
 
-dynect4r is a Ruby library and command line client for the Dynect REST API.
+dynect4r is a Ruby library and command line client for the Dynect REST API (version 2).
 
 == Installation
 

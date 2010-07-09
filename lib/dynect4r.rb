@@ -5,7 +5,6 @@ require 'json'
 require 'logger'
 require 'rest_client'
 
-
 module Dynect
 
   class Client
