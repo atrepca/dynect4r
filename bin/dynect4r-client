@@ -1,0 +1,173 @@
+#!/usr/bin/env ruby
+
+require 'dynect4r'
+require 'optparse'
+require 'pp'
+require 'set'
+
+# set default command line options
+options = {
+  :cred_file       => './dynect4r.secret',
+  :customer        => nil,
+  :username        => nil,
+  :password        => nil,
+  :zone            => nil,
+  :node            => Socket.gethostbyname(Socket.gethostname).first,
+  :ttl             => 86400,
+  :type            => 'A',
+  :rdata           => nil,
+  :log_level       => 'info',
+  :dry_run         => false,
+  :cancel_on_error => false
+}
+
+# parse command line options
+OptionParser.new do |opts|
+  opts.banner = "Usage: #{$0} [options] [rdata][, ...]\n" \
+    + "Example: #{$0} -n srv.example.org -t SRV 0 10 20 target.example.org"
+
+  opts.on('-c', '--credentials-file VALUE', 'Path to file containing API customer/username/password (default: %s)' % options[:cred_file]) do |opt|
+    options[:cred_file] = opt
+  end
+
+  opts.on('-z', '--zone VALUE', 'DNS Zone (default: Auto-detect)') do |opt|
+    options[:zone] = opt
+  end
+
+  opts.on('-n', '--node VALUE', 'Node name (default: %s)' % options[:node]) do |opt|
+    options[:node] = opt
+  end
+
+  opts.on('-s', '--ttl VALUE', 'Time to Live (default: %s)' % options[:ttl]) do |opt|
+    options[:ttl] = opt
+  end
+
+  opts.on('-t', '--type VALUE', 'Record type (default: %s)' % options[:type]) do |opt|
+    options[:type] = opt.upcase
+  end
+
+  opts.on('-v', '--verbosity VALUE', 'Log verbosity (default: %s)' % options[:log_level]) do |opt|
+    options[:log_level] = opt
+  end
+
+  opts.on('--dry-run', "Perform a trial run without making changes (default: %s)" % options[:dry_run]) do |opt|
+    options[:dry_run] = opt
+  end
+
+  opts.on('--cancel-on-error', "All changes will be canceled if any error occurs (default: %s)" % options[:cancel_on_error]) do |opt|
+    options[:cancel_on_error] = opt
+  end
+
+end.parse!
+options[:rdata] = ARGV.join(' ').split(',').collect { |obj| obj.strip() }
+
+# instantiate logger
+log = Dynect::Logger.new(STDOUT)
+log.level = eval('Dynect::Logger::' + options[:log_level].upcase)
+RestClient.log = log
+
+# validate command line options
+begin
+  (options[:customer_name], options[:user_name], options[:password]) = File.open(options[:cred_file]).readline().strip().split()
+rescue Errno::ENOENT
+  log.error('Credentials file does not exist: %s' % options[:cred_file])
+  Process.exit(1)
+end
+if !options[:zone]
+  options[:zone] = options[:node][(options[:node].index('.') + 1)..-1]
+end
+
+# track number of changes and errors
+changes = 0
+errors = 0
+
+# instantiate dynect client and log in
+log.info('Starting session')
+begin
+  c = Dynect::Client.new(:customer_name => options[:customer_name],
+                         :user_name => options[:user_name],
+                         :password => options[:password])
+rescue Dynect::DynectError
+  log.error($!.message)
+  Process.exit(1)
+end
+
+# create set of existing records
+begin
+  existing_rdata = {}
+  response = c.rest_call(:get, [Dynect::rtype_to_resource(options[:type]), options[:zone], options[:node]])
+  response[:data].each do |url|
+    rdata = c.rest_call(:get, url)[:data][:rdata].inject({}) { |memo,(k,v)| memo[k.to_s] = v.to_s; memo }
+    existing_rdata[rdata] = url
+    log.info('Found record (Zone="%s", Node="%s" TTL="%s", Type="%s", RData="%s")' %
+      [options[:zone], options[:node], options[:ttl], options[:type], rdata.to_json])
+  end
+rescue Dynect::DynectError
+  log.error('Query for records failed - %s' % $!.message)
+  Process.exit(1)
+end
+
+# create set of new records
+new_rdata = Set.new
+options[:rdata].each do |rdata|
+  new_rdata << Dynect::args_for_rtype(options[:type], rdata)
+end
+
+# delete records
+(existing_rdata.keys.to_set - new_rdata).each do |rdata|
+  log.warn('%sDeleting record (Zone="%s", Node="%s" TTL="%s", Type="%s", RData="%s")' %
+    [options[:dry_run] ? '(NOT) ' : '', options[:zone], options[:node], options[:ttl], options[:type], rdata.to_json])
+  begin
+    if not options[:dry_run]
+      c.rest_call(:delete, existing_rdata[rdata])
+    end
+    changes += 1
+  rescue Dynect::DynectError
+    errors += 1
+    log.error('Failed to delete record - %s' % $!.message)
+  end
+end
+
+# add new records
+(new_rdata - existing_rdata.keys.to_set).each do |rdata|
+  log.warn('%sCreating record (Zone="%s", Node="%s" TTL="%s", Type="%s", RData="%s")' %
+    [options[:dry_run] ? '(NOT) ' : '', options[:zone], options[:node], options[:ttl], options[:type], rdata.to_json])
+  begin
+    if not options[:dry_run]
+      response = c.rest_call(:post, [Dynect::rtype_to_resource(options[:type]), options[:zone], options[:node]], { 'rdata' => rdata, 'ttl' => options[:ttl] })
+    end
+    changes += 1
+  rescue Dynect::DynectError
+    errors += 1
+    log.error('Failed to add record - %s' % $!.message)
+  end
+end
+
+# publish changes
+if changes > 0
+  begin
+    if options[:cancel_on_error] and errors > 0
+      log.warn('%sCanceling changes' % [options[:dry_run] ? '(NOT) ' : ''])
+      if not options[:dry_run]
+        c.rest_call(:delete, [ 'ZoneChanges', options[:zone]])
+      end
+    else
+      log.info('%sPublishing changes' % [options[:dry_run] ? '(NOT) ' : ''])
+      if not options[:dry_run]
+        c.rest_call(:put, [ 'Zone', options[:zone]], { 'publish' => 'true' })
+      end
+    end
+  rescue Dynect::DynectError
+    log.error($!.message)
+  end
+else
+  log.info('No changes made')
+end
+
+# terminate session
+log.info('Terminating session')
+begin
+  c.rest_call(:delete, 'Session')
+rescue Dynect::DynectError
+  log.error($!.message)
+end
