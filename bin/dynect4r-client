@@ -13,7 +13,7 @@ options = {
   :password        => nil,
   :zone            => nil,
   :node            => Socket.gethostbyname(Socket.gethostname).first,
-  :ttl             => 86400,
+  :ttl             => 3600,
   :type            => 'A',
   :rdata           => nil,
   :log_level       => 'info',
@@ -39,7 +39,7 @@ OptionParser.new do |opts|
   end
 
   opts.on('-s', '--ttl VALUE', 'Time to Live (default: %s)' % options[:ttl]) do |opt|
-    options[:ttl] = opt
+    options[:ttl] = opt.to_i
   end
 
   opts.on('-t', '--type VALUE', 'Record type (default: %s)' % options[:type]) do |opt|
@@ -93,33 +93,47 @@ rescue Dynect::DynectError
 end
 
 # create set of existing records
+curr_rec_args = {}
 begin
-  existing_rdata = {}
   response = c.rest_call(:get, [Dynect::rtype_to_resource(options[:type]), options[:zone], options[:node]])
   response[:data].each do |url|
-    rdata = c.rest_call(:get, url)[:data][:rdata].inject({}) { |memo,(k,v)| memo[k.to_s] = v.to_s; memo }
-    existing_rdata[rdata] = url
-    log.info('Found record (Zone="%s", Node="%s" TTL="%s", Type="%s", RData="%s")' %
-      [options[:zone], options[:node], options[:ttl], options[:type], rdata.to_json])
+    begin
+      record = c.rest_call(:get, url)[:data]
+      rdata = record[:rdata].inject({}) { |memo,(k,v)| memo[k.to_s] = v.to_s; memo }
+      log.info('Found record (Zone="%s", Node="%s" TTL="%s", Type="%s", RData="%s")' %
+        [record[:zone], record[:fqdn], record[:ttl], record[:record_type], rdata.to_json])
+      record_args = {
+        'ttl'   => record[:ttl],
+        'rdata' => rdata
+      }
+      curr_rec_args[record_args] = url
+    rescue Dynect::DynectError
+      log.error('Query failed for %s - %s' % [url, $!.message])
+    end
   end
+rescue Dynect::NotFoundError
+  log.info('No records found')
 rescue Dynect::DynectError
   log.error('Query for records failed - %s' % $!.message)
   Process.exit(1)
 end
 
 # create set of new records
-new_rdata = Set.new
+new_rec_args = Set.new
 options[:rdata].each do |rdata|
-  new_rdata << Dynect::args_for_rtype(options[:type], rdata)
+  new_rec_args << {
+    'ttl'   => options[:ttl],
+    'rdata' => Dynect::args_for_rtype(options[:type], rdata)
+  }
 end
 
 # delete records
-(existing_rdata.keys.to_set - new_rdata).each do |rdata|
+(curr_rec_args.keys.to_set - new_rec_args).each do |rec_args|
   log.warn('%sDeleting record (Zone="%s", Node="%s" TTL="%s", Type="%s", RData="%s")' %
-    [options[:dry_run] ? '(NOT) ' : '', options[:zone], options[:node], options[:ttl], options[:type], rdata.to_json])
+    [options[:dry_run] ? '(NOT) ' : '', options[:zone], options[:node], rec_args['ttl'], options[:type], rec_args['rdata'].to_json])
   begin
     if not options[:dry_run]
-      c.rest_call(:delete, existing_rdata[rdata])
+      c.rest_call(:delete, curr_rec_args[rec_args])
     end
     changes += 1
   rescue Dynect::DynectError
@@ -129,12 +143,12 @@ end
 end
 
 # add new records
-(new_rdata - existing_rdata.keys.to_set).each do |rdata|
+(new_rec_args - curr_rec_args.keys.to_set).each do |rec_args|
   log.warn('%sCreating record (Zone="%s", Node="%s" TTL="%s", Type="%s", RData="%s")' %
-    [options[:dry_run] ? '(NOT) ' : '', options[:zone], options[:node], options[:ttl], options[:type], rdata.to_json])
+    [options[:dry_run] ? '(NOT) ' : '', options[:zone], options[:node], rec_args['ttl'], options[:type], rec_args['rdata'].to_json])
   begin
     if not options[:dry_run]
-      response = c.rest_call(:post, [Dynect::rtype_to_resource(options[:type]), options[:zone], options[:node]], { 'rdata' => rdata, 'ttl' => options[:ttl] })
+      response = c.rest_call(:post, [Dynect::rtype_to_resource(options[:type]), options[:zone], options[:node]], rec_args)
     end
     changes += 1
   rescue Dynect::DynectError
