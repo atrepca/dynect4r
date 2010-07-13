@@ -96,14 +96,14 @@ end
 curr_rec_args = {}
 begin
   response = c.rest_call(:get, [Dynect::rtype_to_resource(options[:type]), options[:zone], options[:node]])
-  response[:data].each do |url|
+  response['data'].each do |url|
     begin
-      record = c.rest_call(:get, url)[:data]
-      rdata = record[:rdata].inject({}) { |memo,(k,v)| memo[k.to_s] = v.to_s; memo }
+      record = c.rest_call(:get, url)['data']
+      rdata = record['rdata'].inject({}) { |memo,(k,v)| memo[k.to_s] = v.to_s; memo }
       log.info('Found record (Zone="%s", Node="%s" TTL="%s", Type="%s", RData="%s")' %
-        [record[:zone], record[:fqdn], record[:ttl], record[:record_type], rdata.to_json])
+        [record['zone'], record['fqdn'], record['ttl'], record['record_type'], rdata.to_json])
       record_args = {
-        'ttl'   => record[:ttl],
+        'ttl'   => record['ttl'],
         'rdata' => rdata
       }
       curr_rec_args[record_args] = url

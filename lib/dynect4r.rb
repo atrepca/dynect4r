@@ -1,6 +1,4 @@
 require 'rubygems'
-gem 'json', '>= 1.4.3'
-
 require 'json'
 require 'logger'
 require 'rest_client'
@@ -14,7 +12,7 @@ module Dynect
       @base_url = 'https://api2.dynect.net'
       @headers = { :content_type => :json, :accept => :json }
       response = rest_call(:post, 'Session', params)
-      @headers['Auth-Token'] = response[:data][:token]
+      @headers['Auth-Token'] = response['data']['token']
     end
 
     # do a rest call
@@ -94,7 +92,7 @@ module Dynect
 
       # parse response
       begin
-        @hash = JSON.parse(response, :symbolize_names => true)
+        @hash = JSON.parse(response)
       rescue JSON::ParserError
         if response =~ /REST\/Job\/[0-9]+/
           raise RedirectError, response
@@ -104,33 +102,33 @@ module Dynect
       end
 
       # raise error based on error code
-      if @hash.has_key?(:msgs)
-        @hash[:msgs].each do |msg|
-          case msg[:ERR_CD]
+      if @hash.has_key?('msgs')
+        @hash['msgs'].each do |msg|
+          case msg['ERR_CD']
           when 'ILLEGAL_OPERATION'
-            raise IllegalOperationError, msg[:INFO]
+            raise IllegalOperationError, msg['INFO']
           when 'INTERNAL_ERROR'
-            raise InternalErrorError, msg[:INFO]
+            raise InternalErrorError, msg['INFO']
           when 'INVALID_DATA'
-            raise InvalidDataError, msg[:INFO]
+            raise InvalidDataError, msg['INFO']
           when 'INVALID_REQUEST'
-            raise InvalidRequestError, msg[:INFO]
+            raise InvalidRequestError, msg['INFO']
           when 'INVALID_VERSION'
-            raise InvalidVersionError, msg[:INFO]
+            raise InvalidVersionError, msg['INFO']
           when 'MISSING_DATA'
-            raise MissingDataError, msg[:INFO]
+            raise MissingDataError, msg['INFO']
           when 'NOT_FOUND'
-            raise NotFoundError, msg[:INFO]
+            raise NotFoundError, msg['INFO']
           when 'OPERATION_FAILED'
-            raise OperationFailedError, msg[:INFO]
+            raise OperationFailedError, msg['INFO']
           when 'PERMISSION_DENIED'
-            raise PermissionDeniedError, msg[:INFO]
+            raise PermissionDeniedError, msg['INFO']
           when 'SERVICE_UNAVAILABLE'
-            raise ServiceUnavailableError, msg[:INFO]
+            raise ServiceUnavailableError, msg['INFO']
           when 'TARGET_EXISTS'
-            raise TargetExistsError, msg[:INFO]
+            raise TargetExistsError, msg['INFO']
           when 'UNKNOWN_ERROR'
-            raise UnknownErrorError, msg[:INFO]
+            raise UnknownErrorError, msg['INFO']
           end
         end
       end
