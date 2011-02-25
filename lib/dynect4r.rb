@@ -104,7 +104,7 @@ module Dynect
       # raise error based on error code
       if @hash.has_key?('msgs')
         @hash['msgs'].each do |msg|
-	  m=msg['INFO']
+	  m=msg['INFO']+" -- "+@hash.inspect
           case msg['ERR_CD']
           when 'ILLEGAL_OPERATION'
             raise IllegalOperationError, m
