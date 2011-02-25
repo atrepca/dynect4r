@@ -104,31 +104,32 @@ module Dynect
       # raise error based on error code
       if @hash.has_key?('msgs')
         @hash['msgs'].each do |msg|
+	  m=msg['INFO']
           case msg['ERR_CD']
           when 'ILLEGAL_OPERATION'
-            raise IllegalOperationError, msg['INFO']
+            raise IllegalOperationError, m
           when 'INTERNAL_ERROR'
-            raise InternalErrorError, msg['INFO']
+            raise InternalErrorError, m
           when 'INVALID_DATA'
-            raise InvalidDataError, msg['INFO']
+            raise InvalidDataError, m
           when 'INVALID_REQUEST'
-            raise InvalidRequestError, msg['INFO']
+            raise InvalidRequestError, m
           when 'INVALID_VERSION'
-            raise InvalidVersionError, msg['INFO']
+            raise InvalidVersionError, m
           when 'MISSING_DATA'
-            raise MissingDataError, msg['INFO']
+            raise MissingDataError, m
           when 'NOT_FOUND'
-            raise NotFoundError, msg['INFO']
+            raise NotFoundError, m
           when 'OPERATION_FAILED'
-            raise OperationFailedError, msg['INFO']
+            raise OperationFailedError, m
           when 'PERMISSION_DENIED'
-            raise PermissionDeniedError, msg['INFO']
+            raise PermissionDeniedError, m
           when 'SERVICE_UNAVAILABLE'
-            raise ServiceUnavailableError, msg['INFO']
+            raise ServiceUnavailableError, m
           when 'TARGET_EXISTS'
-            raise TargetExistsError, msg['INFO']
+            raise TargetExistsError, m
           when 'UNKNOWN_ERROR'
-            raise UnknownErrorError, msg['INFO']
+            raise UnknownErrorError, m
           end
         end
       end
