@@ -71,7 +71,7 @@ begin
   (options[:customer_name], options[:user_name], options[:password]) = File.open(options[:cred_file]).readline().strip().split()
 rescue Errno::ENOENT
   log.error('Credentials file does not exist: %s' % options[:cred_file])
-  Process.exit(1)
+  Process.exit(8)
 end
 if !options[:zone]
   options[:zone] = options[:node][(options[:node].index('.') + 1)..-1]
@@ -89,7 +89,7 @@ begin
                          :password => options[:password])
 rescue Dynect::DynectError
   log.error($!.message)
-  Process.exit(1)
+  Process.exit(2)
 end
 
 # create set of existing records
@@ -115,7 +115,7 @@ rescue Dynect::NotFoundError
   log.info('No records found')
 rescue Dynect::DynectError
   log.error('Query for records failed - %s' % $!.message)
-  Process.exit(1)
+  Process.exit(4)
 end
 
 # create set of new records
