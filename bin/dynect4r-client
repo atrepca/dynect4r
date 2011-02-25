@@ -93,6 +93,9 @@ rescue Dynect::DynectError
 rescue Errno::ENETUNREACH
   log.error("Errno::ENETUNREACH "+$!.message)
   Process.exit(5)
+rescue
+  log.error("Unknown exception "+$!.message)
+  Process.exit(6)
 end
 
 # create set of existing records
