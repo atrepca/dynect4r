@@ -158,7 +158,7 @@ end
     end
     changes += 1
   rescue Dynect::DynectError
-    errors += 1
+    errors += 2
     log.error('Failed to add record - %s' % $!.message)
   end
 end
@@ -178,6 +178,7 @@ if changes > 0
       end
     end
   rescue Dynect::DynectError
+    errors += 4
     log.error($!.message)
   end
 else
@@ -189,5 +190,10 @@ log.info('Terminating session')
 begin
   c.rest_call(:delete, 'Session')
 rescue Dynect::DynectError
+  errors += 8
   log.error($!.message)
+end
+
+if errors > 0
+  Process.exit(16+errors)
 end
