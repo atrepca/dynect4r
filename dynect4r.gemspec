@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
   s.name              = 'dynect4r'
-  s.version           = '0.2.3'
+  s.version           = '0.2.4'
   s.authors           = ["Michael T. Conigliaro"]
   s.email             = ["mike [at] conigliaro [dot] org"]
   s.homepage          = "http://github.com/mconigliaro/dynect4r"
