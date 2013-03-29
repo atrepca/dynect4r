@@ -17,7 +17,7 @@ dynect4r is a Ruby library and command line client for the Dynect REST API (vers
 
 == Using the built-in command line client
 
-1. Create a file called <b>dynect4r.secret</b> containing your Dynect customer name, username and password (i.e. on one line separated by whitespace). Note that this file is assumed to be in the current directory by default.
+1. Create a file called <b>.dynect4r</b> containing your Dynect customer name, username and password on one line separated by whitespace. Note that this file is assumed to be in the home directory by default.
 2. See examples below:
 
 === General usage
@@ -54,3 +54,5 @@ See the <b>--help</b> command line option:
 Use debug logging:
 
   dynect4r-client -v debug
+
+All output is also logged to file: <b>dynect4r.log</b>, by default sitting in the home directory.

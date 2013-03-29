@@ -169,6 +169,22 @@ module Dynect
     end
   end
 
+  class Tee
+  # log to both STDOUT and a file
+
+    def initialize(*targets)
+      @targets = targets
+    end
+
+    def write(*args)
+      @targets.each {|t| t.write(*args)}
+    end
+
+    def close
+      @targets.each(&:close)
+    end
+  end
+
   class << self
 
     # return the appropriate rest resource for the given rtype

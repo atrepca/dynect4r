@@ -4,10 +4,11 @@ require 'dynect4r'
 require 'optparse'
 require 'pp'
 require 'set'
+require 'etc'
 
 # set default command line options
 options = {
-  :cred_file       => './dynect4r.secret',
+  :cred_file       => "#{Etc.getpwuid.dir}/.dynect4r",
   :customer        => nil,
   :username        => nil,
   :password        => nil,
@@ -17,6 +18,7 @@ options = {
   :type            => 'A',
   :rdata           => nil,
   :log_level       => 'info',
+  :log_file        => "#{Etc.getpwuid.dir}/dynect4r.log",
   :dry_run         => false,
   :cancel_on_error => false
 }
@@ -46,6 +48,10 @@ OptionParser.new do |opts|
     options[:type] = opt.upcase
   end
 
+  opts.on('-l', '--logfile VALUE', 'Log file (default: %s)' % options[:log_file]) do |opt|
+    options[:log_file] = opt
+  end
+
   opts.on('-v', '--verbosity VALUE', 'Log verbosity (default: %s)' % options[:log_level]) do |opt|
     options[:log_level] = opt
   end
@@ -62,7 +68,9 @@ end.parse!
 options[:rdata] = ARGV.join(' ').split(',').collect { |obj| obj.strip() }
 
 # instantiate logger
-log = Dynect::Logger.new(STDOUT)
+log_file = File.open(options[:log_file], "a")
+log_file.write "\n"
+log = Dynect::Logger.new Dynect::Tee.new(STDOUT, log_file)
 log.level = eval('Dynect::Logger::' + options[:log_level].upcase)
 RestClient.log = log
 
